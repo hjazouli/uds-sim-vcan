@@ -1,0 +1,85 @@
+name: UDS Simulator CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint with Black
+        run: black --check uds scripts
+
+      - name: Lint with Flake8
+        run: flake8 uds scripts --count --select=E9,F63,F7,F82 --show-source --statistics
+
+  logic-guard:
+    name: Logic Check (Unit Tests)
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run ECU Unit Tests
+        run: pytest uds/ecu/tests/
+
+  system-guard:
+    name: System Check (Functional Sequences)
+    needs: logic-guard
+    runs-on: ubuntu-latest
+    env:
+      UDS_FORCE_VIRTUAL: "1" # Use pure-python virtual bus for CI stability
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start ECU Server in background
+        run: |
+          python3 -m uds.ecu.server &
+          sleep 3  # Wait for server to initialize
+
+      - name: Run Functional Test Sequences
+        run: pytest uds/tester/tests/test_sequences.py
+
+      - name: Upload Test Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uds-test-reports
+          path: logs/

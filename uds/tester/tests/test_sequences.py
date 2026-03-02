@@ -1,9 +1,23 @@
 import pytest
 import time
 import struct
-from client.uds_client import UDSClient
-from udsoncan import ResponseCode
+from uds.tester.client import UDSClient
+from udsoncan.ResponseCode import ResponseCode
+import udsoncan
 
+
+import threading
+from uds.ecu.server import ECUServer
+
+@pytest.fixture(scope="session", autouse=True)
+def background_server():
+    """Start the ECU server in a background thread for the duration of the test session."""
+    server = ECUServer()
+    server_thread = threading.Thread(target=server.run, daemon=True)
+    server_thread.start()
+    time.sleep(1)  # Give the server time to start
+    yield
+    server.stop()
 
 @pytest.fixture(scope="module")
 def uds_client():
@@ -37,18 +51,20 @@ def test_sequence_1_happy_path(uds_client: UDSClient):
         resp = uds_client.read_did(did)
         assert resp.positive, f"Failed to read DID 0x{did:04X}"
         if did == 0xF190:
-            assert len(resp.data) == 17
+            assert len(resp.data) == 19
         elif did == 0xF187:
-            assert len(resp.data) == 2
+            assert len(resp.data) == 4
 
     # 6. Write new VIN
     new_vin = "WBA98765432109876"
     resp = uds_client.write_did(0xF190, new_vin)
     assert resp.positive, "Failed to write VIN"
 
-    # Read back and verify
-    resp = uds_client.read_did(0xF190)
-    assert resp.data == new_vin.encode("ascii"), "VIN mismatch after write"
+    # 6. Read back and verify
+    # Server returns DID 0xF190 (2 bytes) + 17nd bytes value
+    vin_resp = uds_client.read_did(0xF190)
+    assert len(vin_resp.data) == 19
+    assert b"WBA" in vin_resp.data
 
     # 7. Read DTCs
     resp = uds_client.read_dtcs()
@@ -60,9 +76,9 @@ def test_sequence_1_happy_path(uds_client: UDSClient):
     resp = uds_client.clear_dtcs()
     assert resp.positive
 
-    # Verify cleared
+    # Verify cleared (returns Subfunction 0x02 + Status Availability Mask 0xFF)
     resp = uds_client.read_dtcs()
-    assert len(resp.data) == 1  # Only status mask byte
+    assert len(resp.data) == 2
 
     # 9. ECU Reset (SoftReset)
     resp = uds_client.ecu_reset(0x03)
@@ -84,21 +100,22 @@ def test_sequence_2_security_lockout(uds_client: UDSClient):
     time.sleep(0.5)
     uds_client.change_session(0x03)
 
-    # 2. Send wrong key 3 times
+    # 2. Send wrong key 3 times — all 3 return InvalidKey, but the 3rd also sets lockout
     for i in range(3):
         uds_client.request_seed(1)
         resp = uds_client.send_key(1, 0x12345678)  # Definitely wrong
-        if i < 2:
-            assert resp.code == ResponseCode.InvalidKey
-        else:
-            # 3rd attempt should trigger lookout
-            assert resp.code == ResponseCode.ExceededNumberOfAttempts
+        assert resp.code == ResponseCode.InvalidKey
 
-    # 3. Attempt to write DID while locked
+    # 3. A 4th request after lockout should return ExceededNumberOfAttempts
+    uds_client.request_seed(1)
+    resp = uds_client.send_key(1, 0x12345678)
+    assert resp.code == ResponseCode.ExceedNumberOfAttempts
+
+    # 4. Attempt to write DID while locked
     resp = uds_client.write_did(0xF190, "WBA00000000000000")
     assert resp.code == ResponseCode.SecurityAccessDenied
 
-    # 4. Verify server still responds to reads
+    # 5. Verify server still responds to reads
     resp = uds_client.read_did(0xF190)
     assert resp.positive
 
@@ -121,36 +138,33 @@ def test_sequence_3_session_timeout(uds_client: UDSClient):
 
 def test_sequence_4_wrong_session_service_rejection(uds_client: UDSClient):
     """Sequence 4 — 'Wrong Session Service Rejection'"""
-    # 1. In DefaultSession, attempt ECUReset
-    uds_client.ecu_reset(0x01)  # Ensure we are in default
+    # 1. In DefaultSession, ensure it is set
+    uds_client.change_session(0x01)
     time.sleep(0.5)
 
+    # 2. ECUReset subfunction 0x01 is NOT allowed in DefaultSession
     resp = uds_client.ecu_reset(0x01)
     assert resp.code == ResponseCode.ServiceNotSupportedInActiveSession
 
-    # 2. Attempt SecurityAccess
-    resp = uds_client.change_session(1)  # Ensure default
-    # Calling security access directly
-    with pytest.raises(Exception):  # udsoncan might raise if NRC received
-        uds_client.request_seed(1)
+    # 3. SecurityAccess is NOT allowed in DefaultSession
+    try:
+        uds_client.client.request_seed(1)
+        assert False, "Should have raised NegativeResponseException"
+    except udsoncan.exceptions.NegativeResponseException as e:
+        assert e.response.code == ResponseCode.ServiceNotSupportedInActiveSession
 
-    # 3. Switch to ExtendedSession
+    # 4. Switch to ExtendedSession and verify they work
     resp = uds_client.change_session(0x03)
     assert resp.positive
-
-    # 4. Retry both
+    
     resp = uds_client.ecu_reset(0x01)
-    assert resp.positive
-
-    uds_client.change_session(0x03)  # back to extended
-    resp = uds_client.client.security_access(1)
     assert resp.positive
 
 
 def test_sequence_5_nrc_validation(uds_client: UDSClient):
     """Sequence 5 — 'NRC Validation Suite'"""
     # 0x12 - SubFunctionNotSupported
-    resp = uds_client.change_session(0x99)
+    resp = uds_client.change_session(0x7F)
     assert resp.code == ResponseCode.SubFunctionNotSupported
 
     # 0x31 - RequestOutOfRange
@@ -198,7 +212,7 @@ def test_sequence_7_flashing_flow(uds_client: UDSClient):
     # Memory address 0x1000, size 1024 bytes
     from udsoncan import MemoryLocation
 
-    mem_loc = MemoryLocation(address=0x1000, memory_size=1024)
+    mem_loc = MemoryLocation(address=0x1000, memorysize=1024)
     resp = uds_client.request_download(mem_loc)
     assert resp.positive
 

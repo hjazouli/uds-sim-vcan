@@ -6,6 +6,7 @@ import datetime
 from typing import Optional
 
 import can
+import sys
 from udsoncan import services
 
 # ANSI Color Codes
@@ -20,12 +21,12 @@ class CANMonitor:
     Real-time CAN frame logger and UDS decoder.
     """
 
-    def __init__(self, interface: str = "vcan0") -> None:
+    def __init__(self, interface: str = "vcan0", bus: Optional[can.BusABC] = None) -> None:
         self.interface = interface
-        self.log_file = f"reports/can_log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        self.log_file = f"logs/can_log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 
-        # Ensure reports directory exists
-        os.makedirs("reports", exist_ok=True)
+        # Ensure logs directory exists
+        os.makedirs("logs", exist_ok=True)
 
         self.csv_file = open(self.log_file, "w", newline="")
         self.csv_writer = csv.writer(self.csv_file)
@@ -33,11 +34,15 @@ class CANMonitor:
             ["Timestamp", "ID", "Direction", "Type", "Service", "Details", "Data"]
         )
 
-        try:
+        # Use the appropriate CAN interface based on OS
+        if bus:
+            self.bus = bus
+        elif os.name == "posix" and sys.platform == "darwin":
+            # macOS – use the virtual backend
+            self.bus = can.interface.Bus(channel=self.interface, interface="virtual")
+        else:
+            # Linux or other platforms – default to socketcan
             self.bus = can.interface.Bus(channel=self.interface, bustype="socketcan")
-        except Exception as e:
-            print(f"Failed to initialize CAN bus: {e}")
-            raise
 
     def decode_uds(self, msg: can.Message) -> str:
         """Simple UDS decoding logic."""

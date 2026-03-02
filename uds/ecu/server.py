@@ -10,13 +10,14 @@ import isotp
 import udsoncan
 from udsoncan.connections import IsoTPConnection
 from udsoncan.client import Client
-from udsoncan import services, Response, ResponseCode
+from udsoncan import services, Response
+from udsoncan.ResponseCode import ResponseCode
 
-from server.did_store import DIDStore
-from server.dtc_store import DTCStore
-from server.security import SecurityManager
-from server.session_manager import SessionManager, DiagnosticSession
-from server.transport import create_connection, CHANNEL, USE_VIRTUAL
+from uds.ecu.did_store import DIDStore
+from uds.ecu.dtc_store import DTCStore
+from uds.ecu.security import SecurityManager
+from uds.ecu.session_manager import SessionManager, DiagnosticSession
+from uds.network.transport import create_connection, CHANNEL, USE_VIRTUAL
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -28,7 +29,7 @@ class ECUServer:
     UDS ECU Server simulation.
     """
 
-    def __init__(self, interface: str = CHANNEL, rxid: int = 0x7E0, txid: int = 0x7E8) -> None:
+    def __init__(self, interface: str = CHANNEL, rxid: int = 0x7E0, txid: int = 0x7E8, bus: Optional[can.BusABC] = None) -> None:
         self.interface = interface
         self.rxid = rxid
         self.txid = txid
@@ -65,6 +66,7 @@ class ECUServer:
                 rxid=self.rxid,
                 txid=self.txid,
                 interface=self.interface,
+                bus=bus
             )
         except Exception as e:
             logger.error(f"Failed to initialize transport: {e}")
@@ -132,7 +134,7 @@ class ECUServer:
 
         if subfunction == 0x01:  # RequestSeed
             if self.security_manager.lockout_active:
-                return Response(services.SecurityAccess, ResponseCode.ExceededNumberOfAttempts)
+                return Response(services.SecurityAccess, ResponseCode.ExceedNumberOfAttempts)
             seed = self.security_manager.generate_seed()
             return Response(
                 services.SecurityAccess,
@@ -142,7 +144,7 @@ class ECUServer:
 
         elif subfunction == 0x02:  # SendKey
             if self.security_manager.lockout_active:
-                return Response(services.SecurityAccess, ResponseCode.ExceededNumberOfAttempts)
+                return Response(services.SecurityAccess, ResponseCode.ExceedNumberOfAttempts)
 
             if self.security_manager.validate_key(request.data):
                 return Response(
@@ -151,15 +153,19 @@ class ECUServer:
                     data=bytes([subfunction]),
                 )
             else:
-                if self.security_manager.lockout_active:
-                    return Response(services.SecurityAccess, ResponseCode.ExceededNumberOfAttempts)
+                # Even if it just reached MAX_ATTEMPTS, this specific error is InvalidKey.
+                # Lockout will block the NEXT attempt.
                 return Response(services.SecurityAccess, ResponseCode.InvalidKey)
 
         return Response(services.SecurityAccess, ResponseCode.SubFunctionNotSupported)
 
     def _handle_read_did(self, request: udsoncan.Request) -> Response:
         """Handle 0x22 - ReadDataByIdentifier."""
-        dids = request.didlist
+        payload = request.data
+        if not payload or len(payload) % 2 != 0:
+            return Response(services.ReadDataByIdentifier, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+        
+        dids = [struct.unpack(">H", payload[i:i+2])[0] for i in range(0, len(payload), 2)]
         response_data = b""
         for did in dids:
             try:
@@ -177,8 +183,12 @@ class ECUServer:
         if self.security_manager.locked:
             return Response(services.WriteDataByIdentifier, ResponseCode.SecurityAccessDenied)
 
-        did = request.did
-        data = request.data
+        payload = request.data
+        if len(payload) < 2:
+            return Response(services.WriteDataByIdentifier, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+            
+        did = struct.unpack(">H", payload[:2])[0]
+        data = payload[2:]
         try:
             self.did_store.write(did, data)
             return Response(
@@ -204,12 +214,13 @@ class ECUServer:
         """Handle 0x19 - ReadDTCInformation."""
         subfunction = request.subfunction
         if subfunction == 0x02:  # reportDTCByStatusMask
-            mask = request.status_mask
+            if not request.data:
+                return Response(services.ReadDTCInformation, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+            mask = request.data[0]
             matching_dtcs = self.dtc_store.get_dtcs_by_status_mask(mask)
 
-            # Protocol: [status_availability_mask] + [DTC1_HB][DTC1_MB][DTC1_LB][Status1] + ...
-            # Status availability mask: 0xFF (all status bits supported for simulation)
-            response_data = b"\xff"
+            # Protocol for 0x19 0x02: [SubFn] [StatusAvailabilityMask] [DTC1...][Status1] ...
+            response_data = bytes([subfunction]) + b"\xff"
             for dtc in matching_dtcs:
                 # DTC format in response is 3 bytes code + 1 byte status
                 code_bytes = struct.pack(">I", dtc["code"])[1:]  # 3 bytes
@@ -235,7 +246,10 @@ class ECUServer:
             return Response(services.RoutineControl, ResponseCode.ServiceNotSupportedInActiveSession)
 
         subfunction = request.subfunction
-        routine_id = request.routine_id
+        if len(request.data) < 2:
+            return Response(services.RoutineControl, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+            
+        routine_id = struct.unpack(">H", request.data[:2])[0]
 
         if routine_id == 0xFF00:  # Erase Memory
             if subfunction == services.RoutineControl.ControlType.startRoutine:
@@ -258,7 +272,25 @@ class ECUServer:
         if self.security_manager.locked:
             return Response(services.RequestDownload, ResponseCode.SecurityAccessDenied)
 
-        logger.info(f"DOWNLOAD: Request received. Entry: {hex(request.memory_location.address)}, Size: {request.memory_location.memory_size}")
+        # payload: [DFI] [ALFI] [Address...] [Size...]
+        if len(request.data) < 2:
+            return Response(services.RequestDownload, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+            
+        dfi = request.data[0]
+        alfi = request.data[1]
+        addr_len = (alfi >> 4) & 0x0F
+        size_len = alfi & 0x0F
+        
+        if len(request.data) < 2 + addr_len + size_len:
+             return Response(services.RequestDownload, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+             
+        addr_bytes = request.data[2 : 2 + addr_len]
+        size_bytes = request.data[2 + addr_len : 2 + addr_len + size_len]
+        
+        address = int.from_bytes(addr_bytes, "big")
+        size = int.from_bytes(size_bytes, "big")
+
+        logger.info(f"DOWNLOAD: Request received. Address: {hex(address)}, Size: {size}")
         self.transfer_active = True
         self.expected_seq_counter = 1
         
@@ -271,13 +303,18 @@ class ECUServer:
         if not self.transfer_active:
             return Response(services.TransferData, ResponseCode.RequestSequenceError)
 
-        seq_counter = request.sequence_counter
+        if not request.data:
+            return Response(services.TransferData, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+            
+        seq_counter = request.data[0]
+        data_payload = request.data[1:]
+        
         if seq_counter != self.expected_seq_counter:
             logger.error(f"TRANSFER: Wrong sequence counter. Expected {self.expected_seq_counter}, got {seq_counter}")
             return Response(services.TransferData, ResponseCode.WrongBlockSequenceCounter)
 
-        logger.info(f"TRANSFER: Received block {seq_counter} ({len(request.data_payload)} bytes)")
-        self.flash_buffer.extend(request.data_payload)
+        logger.info(f"TRANSFER: Received block {seq_counter} ({len(data_payload)} bytes)")
+        self.flash_buffer.extend(data_payload)
         
         self.expected_seq_counter = (self.expected_seq_counter + 1) % 0x100
         return Response(services.TransferData, ResponseCode.PositiveResponse, data=bytes([seq_counter]))
@@ -306,7 +343,7 @@ class ECUServer:
                 response = udsoncan.Response(req.service, ResponseCode.ServiceNotSupported)
 
             logger.info(f"Sending Response: {response}")
-            self.connection.send(response)
+            self.connection.send(response.get_payload())
 
         except Exception as e:
             logger.error(f"Error processing request: {e}")

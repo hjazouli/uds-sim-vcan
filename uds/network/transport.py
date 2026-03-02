@@ -6,7 +6,7 @@ On macOS / Windows: uses isotp.NotifierBasedCanStack over a python-can virtual b
                     (pure Python, no kernel modules, no hardware required).
 
 Usage:
-    from server.transport import create_connection, CHANNEL, USE_VIRTUAL
+    from uds.network.transport import create_connection, CHANNEL, USE_VIRTUAL
 
     conn, extras = create_connection(role="server", rxid=0x7E0, txid=0x7E8)
     # extras contains bus/notifier references that must be kept alive (virtual only)
@@ -27,9 +27,11 @@ logger = logging.getLogger("transport")
 # ---------------------------------------------------------------------------
 # Detect OS → choose backend
 # ---------------------------------------------------------------------------
+import os
 _os = platform.system()
-USE_VIRTUAL: bool = _os != "Linux"   # True on macOS and Windows
-CHANNEL: str = "vcan0" if not USE_VIRTUAL else "virtual_uds"
+# Force virtual mode if not on Linux OR if UDS_FORCE_VIRTUAL is set to 1
+USE_VIRTUAL: bool = (_os != "Linux") or (os.environ.get("UDS_FORCE_VIRTUAL") == "1")
+CHANNEL: str = "vcan0"  # Virtual CAN channel name
 
 if USE_VIRTUAL:
     logger.info(f"[transport] OS={_os}  → using python-can virtual bus (channel={CHANNEL!r})")
@@ -55,38 +57,55 @@ class VirtualIsoTPConnection:
         rxid: int,
         txid: int,
         channel: str = CHANNEL,
+        bus: Optional[can.BusABC] = None,
     ) -> None:
         self.rxid = rxid
         self.txid = txid
         self.channel = channel
         self._lock = threading.Lock()
 
-        # One python-can bus per direction endpoint
-        self._bus = can.interface.Bus(channel=channel, interface="virtual", receive_own_messages=False)
+        if bus:
+            self._bus = bus
+            self._bus_owned = False
+        else:
+            # Use virtual bus for development/sim mode
+            self._bus = can.interface.Bus(channel=channel, interface="virtual", receive_own_messages=False)
+            self._bus_owned = True
 
         addr = isotp.Address(rxid=rxid, txid=txid)
-        params = isotp.params.TransportLayerParameters(
-            stmin=5,        # 5 ms separation time
-            blocksize=10,   # 10-block flow control
-            tx_padding=0xCC,
-        )
-        # NotifierBasedCanStack drives the ISO-TP state machine via python-can notifier
-        self._notifier = can.Notifier(self._bus, [], timeout=0)
-        self._stack = isotp.NotifierBasedCanStack(
+        # New – pass a plain dict of the parameters (compatible with all isotp versions)
+        stack_params = {
+            "stmin": 5,          # 5 ms separation time
+            "blocksize": 10,     # 10‑block flow control
+            "tx_padding": 0xCC,  # padding byte
+        }
+        # Use CanStack instead of NotifierBasedCanStack to avoid Notifier conflicts
+        # We will manually drive the stack in send() and wait_frame()
+        self._stack = isotp.CanStack(
             bus=self._bus,
-            notifier=self._notifier,
             address=addr,
-            params=params,
+            params=stack_params,
         )
 
     # ---- udsoncan Connection interface ----
 
     def open(self) -> None:
-        pass  # Stack is ready on construction
+        self._is_open = True
 
     def close(self) -> None:
-        self._notifier.stop()
-        self._bus.shutdown()
+        self._is_open = False
+        if getattr(self, "_bus_owned", False):
+            self._bus.shutdown()
+
+    def is_open(self) -> bool:
+        return getattr(self, "_is_open", False)
+
+    def get_native_handle(self) -> Any:
+        return self._stack
+
+    def empty_rxqueue(self) -> None:
+        while self._stack.recv() is not None:
+            pass
 
     def send(self, data: bytes, timeout: Optional[float] = 2.0) -> None:
         deadline = None
@@ -102,7 +121,7 @@ class VirtualIsoTPConnection:
             if deadline and time.time() > deadline:
                 raise TimeoutError("VirtualIsoTPConnection send timed out")
 
-    def wait_frame(self, timeout: float = 2.0) -> Optional[bytes]:
+    def wait_frame(self, timeout: float = 2.0, exception: bool = False) -> Optional[bytes]:
         import time
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -111,6 +130,8 @@ class VirtualIsoTPConnection:
             if data is not None:
                 return data
             time.sleep(0.001)
+        if exception:
+            raise TimeoutError("VirtualIsoTPConnection wait_frame timed out")
         return None
 
     def __enter__(self) -> "VirtualIsoTPConnection":
@@ -128,6 +149,7 @@ def create_connection(
     rxid: int,
     txid: int,
     interface: str = CHANNEL,
+    bus: Optional[can.BusABC] = None,
 ) -> Tuple[Any, Dict[str, Any]]:
     """
     Return (connection, extras) where connection is compatible with udsoncan.
@@ -147,5 +169,5 @@ def create_connection(
         return conn, {"socket": sock}
     else:
         # --- macOS / Windows: python-can virtual bus ---
-        conn = VirtualIsoTPConnection(rxid=rxid, txid=txid, channel=interface)
+        conn = VirtualIsoTPConnection(rxid=rxid, txid=txid, channel=interface, bus=bus)
         return conn, {}

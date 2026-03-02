@@ -1,9 +1,9 @@
 import pytest
 import struct
-from server.did_store import DIDStore
-from server.dtc_store import DTCStore
-from server.security import SecurityManager
-from server.session_manager import SessionManager, DiagnosticSession
+from uds.ecu.did_store import DIDStore
+from uds.ecu.dtc_store import DTCStore
+from uds.ecu.security import SecurityManager
+from uds.ecu.session_manager import SessionManager, DiagnosticSession
 
 # --- DIDStore Tests ---
 
