@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, master]
 
+env:
+  UDS_FORCE_VIRTUAL: "1" # Environment-wide safety for CI stability on Linux
+
 jobs:
   quality:
     name: Code Quality

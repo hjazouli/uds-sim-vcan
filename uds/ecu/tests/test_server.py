@@ -22,7 +22,7 @@ def server():
     """
     mock_conn = MagicMock()
 
-    with patch("uds.network.transport.create_connection", return_value=(mock_conn, {})):
+    with patch("uds.ecu.server.create_connection", return_value=(mock_conn, {})):
         s = ECUServer()
 
     return s
