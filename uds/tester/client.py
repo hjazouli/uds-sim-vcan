@@ -14,22 +14,48 @@ from uds.network.transport import create_connection, CHANNEL, USE_VIRTUAL
 
 from udsoncan.common.DidCodec import AsciiCodec
 
+from uds.tools.logging_config import setup_logging
+
+# Use the central logging config
+setup_logging()
 logger = logging.getLogger("UDSClient")
 
-# Default DID configuration for clear text / simple types
-DEFAULT_CONFIG = {
-    "data_identifiers": {
-        0xF190: AsciiCodec(17),
-        0xF18C: AsciiCodec(8),
-        0xF187: ">H",
-        0xF40D: "B",
-        0xD001: ">H",
-        0xD002: "B",
-        0xDDDD: "B",
-        0xFFFF: "B",
-    },
-    "use_server_timing_control": True,
-}
+import json
+import os
+from udsoncan.common.DidCodec import AsciiCodec
+
+def get_config_from_json(path="uds/config/ecu_diag.json"):
+    """Load DIDs from JSON and build udsoncan config."""
+    config = {
+        "data_identifiers": {},
+        "use_server_timing_control": True
+    }
+    
+    if not os.path.exists(path):
+        return config
+
+    try:
+        with open(path, 'r') as f:
+            data = json.load(f)
+            for did in data.get("dids", []):
+                did_id = int(did["id"], 16) if isinstance(did["id"], str) else did["id"]
+                dtype = did.get("type", "ASCII")
+                size = did.get("size", 1)
+                
+                if dtype == "ASCII":
+                    config["data_identifiers"][did_id] = AsciiCodec(size)
+                elif dtype == "UINT16":
+                    config["data_identifiers"][did_id] = ">H"
+                elif dtype == "UINT8":
+                    config["data_identifiers"][did_id] = "B"
+                else:
+                    config["data_identifiers"][did_id] = "B" * size
+    except Exception as e:
+        logger.error(f"Failed to load DID config: {e}")
+        
+    return config
+
+# Shared config will be initialized in the class to allow for dynamic reloading
 
 
 class UDSClient:
@@ -61,7 +87,8 @@ class UDSClient:
         self.client: Optional[Client] = None
 
     def __enter__(self) -> "UDSClient":
-        self.client = Client(self.connection, config=DEFAULT_CONFIG)
+        config = get_config_from_json()
+        self.client = Client(self.connection, config=config)
         self.client.open()
         return self
 
@@ -121,8 +148,8 @@ class UDSClient:
                 )
         raise RuntimeError("Client not opened")
 
-    def read_did(self, did: int) -> udsoncan.Response:
-        """Read data by identifier."""
+    def read_did(self, did: Union[int, List[int]]) -> udsoncan.Response:
+        """Read one or more data identifiers."""
         if self.client:
             try:
                 return self.client.read_data_by_identifier(did)
@@ -248,4 +275,79 @@ class UDSClient:
                     "response",
                     udsoncan.Response(services.RoutineControl, ResponseCode.GeneralReject),
                 )
+        raise RuntimeError("Client not opened")
+
+    def stop_routine(self, routine_id: int) -> udsoncan.Response:
+        """Routine control - stop routine."""
+        if self.client:
+            try:
+                return self.client.routine_control(
+                    routine_id, udsoncan.services.RoutineControl.ControlType.stopRoutine
+                )
+            except Exception as e:
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.RoutineControl, ResponseCode.GeneralReject),
+                )
+        raise RuntimeError("Client not opened")
+
+    def request_routine_results(self, routine_id: int) -> udsoncan.Response:
+        """Routine control - request routine results."""
+        if self.client:
+            try:
+                return self.client.routine_control(
+                    routine_id, udsoncan.services.RoutineControl.ControlType.requestRoutineResults
+                )
+            except Exception as e:
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.RoutineControl, ResponseCode.GeneralReject),
+                )
+        raise RuntimeError("Client not opened")
+
+    def read_memory(self, memory_location: udsoncan.MemoryLocation) -> udsoncan.Response:
+        """Service 0x23 - Read Memory By Address."""
+        if self.client:
+            try:
+                return self.client.read_memory_by_address(memory_location)
+            except Exception as e:
+                return getattr(e, "response", udsoncan.Response(services.ReadMemoryByAddress, ResponseCode.GeneralReject))
+        raise RuntimeError("Client not opened")
+
+    def communication_control(self, control_type: int, communication_type: int) -> udsoncan.Response:
+        """Service 0x28 - Communication Control."""
+        if self.client:
+            try:
+                return self.client.communication_control(control_type, communication_type)
+            except Exception as e:
+                return getattr(e, "response", udsoncan.Response(services.CommunicationControl, ResponseCode.GeneralReject))
+        raise RuntimeError("Client not opened")
+
+    def io_control(self, did: int, control_param: int, values: Optional[Union[dict, bytes]] = None) -> udsoncan.Response:
+        """Service 0x2F - Input Output Control By Identifier."""
+        if self.client:
+            try:
+                return self.client.io_control(did, control_param, values)
+            except Exception as e:
+                return getattr(e, "response", udsoncan.Response(services.InputOutputControlByIdentifier, ResponseCode.GeneralReject))
+        raise RuntimeError("Client not opened")
+
+    def request_upload(self, memory_location: udsoncan.MemoryLocation) -> udsoncan.Response:
+        """Service 0x35 - Request Upload."""
+        if self.client:
+            try:
+                return self.client.request_upload(memory_location)
+            except Exception as e:
+                return getattr(e, "response", udsoncan.Response(services.RequestUpload, ResponseCode.GeneralReject))
+        raise RuntimeError("Client not opened")
+
+    def request_file_transfer(self, mode: int, path: str) -> udsoncan.Response:
+        """Service 0x38 - Request File Transfer."""
+        if self.client:
+            try:
+                return self.client.request_file_transfer(mode, path)
+            except Exception as e:
+                return getattr(e, "response", udsoncan.Response(services.RequestFileTransfer, ResponseCode.GeneralReject))
         raise RuntimeError("Client not opened")

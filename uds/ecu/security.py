@@ -26,15 +26,15 @@ class SecurityManager:
     def validate_key(self, key_bytes: bytes) -> bool:
         """Validate key = seed XOR 0xDEADBEEF."""
         if self.lockout_active:
-            logger.warning("Security access blocked due to previous failed attempts")
+            logger.warning("[bold red]Security access BLOCKED[/] due to previous failed attempts")
             return False
 
         if len(key_bytes) != 4:
-            logger.warning(f"Invalid key length: expected 4 bytes, got {len(key_bytes)}")
+            logger.warning(f"Invalid key length: expected 4 bytes, got [yellow]{len(key_bytes)}[/]")
             self.attempts += 1
             if self.attempts >= self.MAX_ATTEMPTS:
                 self.lockout_active = True
-                logger.error("Security access LOCKED OUT (too many attempts)")
+                logger.error("[bold red]Security access LOCKED OUT[/] (too many attempts)")
             return False
 
         try:
@@ -44,17 +44,17 @@ class SecurityManager:
             if key == expected_key:
                 self.locked = False
                 self.attempts = 0
-                logger.info("Security access UNLOCKED")
+                logger.info("[bold green]Security access UNLOCKED[/]")
                 return True
             else:
                 self.attempts += 1
-                logger.warning(f"Invalid key. Attempt {self.attempts}/{self.MAX_ATTEMPTS}")
+                logger.warning(f"Invalid key. Attempt [yellow]{self.attempts}/{self.MAX_ATTEMPTS}[/]")
                 if self.attempts >= self.MAX_ATTEMPTS:
                     self.lockout_active = True
-                    logger.error("Security access LOCKED OUT (too many attempts)")
+                    logger.error("[bold red]Security access LOCKED OUT[/] (too many attempts)")
                 return False
         except Exception as e:
-            logger.error(f"Error validating key: {e}")
+            logger.error(f"Error validating key: [red]{e}[/]")
             return False
 
     def reset(self) -> None:
@@ -63,4 +63,4 @@ class SecurityManager:
         self.attempts = 0
         self.current_seed = 0
         self.lockout_active = False
-        logger.info("Security manager reset to LOCKED state")
+        logger.info("Security manager reset to [bold yellow]LOCKED[/] state")

@@ -15,12 +15,17 @@ from udsoncan.ResponseCode import ResponseCode
 
 from uds.ecu.did_store import DIDStore
 from uds.ecu.dtc_store import DTCStore
+from uds.ecu.routine_store import RoutineStore
+from uds.ecu.io_control import IOControlManager
+from uds.ecu.memory_manager import MemoryManager
 from uds.ecu.security import SecurityManager
 from uds.ecu.session_manager import SessionManager, DiagnosticSession
 from uds.network.transport import create_connection, CHANNEL, USE_VIRTUAL
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+from uds.tools.logging_config import setup_logging
+
+# Configure logging using our premium central config
+setup_logging()
 logger = logging.getLogger("ECUServer")
 
 
@@ -43,7 +48,12 @@ class ECUServer:
         self.did_store = DIDStore()
         self.dtc_store = DTCStore()
         self.security_manager = SecurityManager()
+        self.routine_store = RoutineStore()
+        self.io_manager = IOControlManager()
+        self.memory_manager = MemoryManager()
         self.session_manager = SessionManager(on_timeout=self._handle_session_timeout)
+
+        self.comm_enabled = True
 
         # Service handlers mapping
         self.services = {
@@ -59,6 +69,11 @@ class ECUServer:
             services.RequestDownload.request_id: self._handle_request_download,
             services.TransferData.request_id: self._handle_transfer_data,
             services.RequestTransferExit.request_id: self._handle_request_transfer_exit,
+            services.ReadMemoryByAddress.request_id: self._handle_read_memory,
+            services.CommunicationControl.request_id: self._handle_comm_control,
+            services.InputOutputControlByIdentifier.request_id: self._handle_io_control,
+            services.RequestUpload.request_id: self._handle_request_upload,
+            services.RequestFileTransfer.request_id: self._handle_file_transfer,
         }
 
         # Flashing state variables
@@ -80,6 +95,9 @@ class ECUServer:
     def _handle_session_timeout(self) -> None:
         """Callback when session times out."""
         self.security_manager.reset()
+        self.routine_store.reset()
+        self.io_manager.reset()
+        self.comm_enabled = True
         self.transfer_active = False
         self.flash_buffer = bytearray()
 
@@ -101,24 +119,32 @@ class ECUServer:
 
     def _handle_ecu_reset(self, request: udsoncan.Request) -> Response:
         """Handle 0x11 - ECUReset."""
-        if not (self.session_manager.is_extended or self.session_manager.is_programming):
-            return Response(services.ECUReset, ResponseCode.ServiceNotSupportedInActiveSession)
-
         reset_type = request.subfunction
-        if reset_type == 0x01:  # HardReset
-            self.session_manager.reset()
-            self.security_manager.reset()
+        logger.info(f"RESET: Type {reset_type} requested")
+
+        if reset_type == services.ECUReset.ResetType.hardReset:
+            self.did_store.reset_to_defaults()
             self.dtc_store.reset()
+            self.security_manager.reset()
+            self.session_manager.reset()
             self.transfer_active = False
             self.flash_buffer = bytearray()
-            return Response(
-                services.ECUReset, ResponseCode.PositiveResponse, data=bytes([reset_type])
-            )
-        elif reset_type == 0x03:  # SoftReset
+            return Response(services.ECUReset, ResponseCode.PositiveResponse, data=bytes([reset_type]))
+            
+        elif reset_type == services.ECUReset.ResetType.softReset:
             self.did_store.reset_to_defaults()
-            return Response(
-                services.ECUReset, ResponseCode.PositiveResponse, data=bytes([reset_type])
-            )
+            self.security_manager.reset()
+            self.session_manager.reset()
+            return Response(services.ECUReset, ResponseCode.PositiveResponse, data=bytes([reset_type]))
+        elif reset_type == services.ECUReset.ResetType.keyOffOnReset:
+            # Simulate a key cycle, reset everything
+            self.did_store.reset_to_defaults()
+            self.dtc_store.reset()
+            self.security_manager.reset()
+            self.session_manager.reset()
+            self.transfer_active = False
+            self.flash_buffer = bytearray()
+            return Response(services.ECUReset, ResponseCode.PositiveResponse, data=bytes([reset_type]))
 
         return Response(services.ECUReset, ResponseCode.SubFunctionNotSupported)
 
@@ -216,25 +242,34 @@ class ECUServer:
     def _handle_read_dtc(self, request: udsoncan.Request) -> Response:
         """Handle 0x19 - ReadDTCInformation."""
         subfunction = request.subfunction
-        if subfunction == 0x02:  # reportDTCByStatusMask
-            if not request.data:
-                return Response(
-                    services.ReadDTCInformation, ResponseCode.IncorrectMessageLengthOrInvalidFormat
-                )
-            mask = request.data[0]
-            matching_dtcs = self.dtc_store.get_dtcs_by_status_mask(mask)
 
-            # Protocol for 0x19 0x02: [SubFn] [StatusAvailabilityMask] [DTC1...][Status1] ...
-            response_data = bytes([subfunction]) + b"\xff"
-            for dtc in matching_dtcs:
+        if subfunction == services.ReadDTCInformation.Subfunction.reportNumberOfDTCByStatusMask:
+            mask = request.data[0] if len(request.data) > 0 else 0xFF
+            count = self.dtc_store.count_dtcs_by_status_mask(mask)
+            # Response: [Sub] [StatusAvailabilityMask] [DTCFormat] [CountHigh] [CountLow]
+            data = bytes([subfunction, 0xFF, 0x01]) + struct.pack(">H", count)
+            return Response(services.ReadDTCInformation, ResponseCode.PositiveResponse, data=data)
+
+        elif subfunction == services.ReadDTCInformation.Subfunction.reportDTCByStatusMask:
+            mask = request.data[0] if len(request.data) > 0 else 0xFF
+            dtcs = self.dtc_store.get_dtcs_by_status_mask(mask)
+            data = bytes([subfunction, 0xFF])  # sub + status availability mask
+            for dtc in dtcs:
                 # DTC format in response is 3 bytes code + 1 byte status
                 code_bytes = struct.pack(">I", dtc["code"])[1:]  # 3 bytes
                 status_byte = struct.pack("B", dtc["status"])
-                response_data += code_bytes + status_byte
-
-            return Response(
-                services.ReadDTCInformation, ResponseCode.PositiveResponse, data=response_data
-            )
+                data += code_bytes + status_byte
+            return Response(services.ReadDTCInformation, ResponseCode.PositiveResponse, data=data)
+            
+        elif subfunction == services.ReadDTCInformation.Subfunction.reportSupportedDTCs:
+            dtcs = self.dtc_store.dtcs
+            data = bytes([subfunction, 0xFF]) # sub + status availability mask
+            for dtc in dtcs:
+                # DTC format in response is 3 bytes code + 1 byte status
+                code_bytes = struct.pack(">I", dtc["code"])[1:]  # 3 bytes
+                status_byte = struct.pack("B", dtc["status"])
+                data += code_bytes + status_byte
+            return Response(services.ReadDTCInformation, ResponseCode.PositiveResponse, data=data)
 
         return Response(services.ReadDTCInformation, ResponseCode.SubFunctionNotSupported)
 
@@ -247,11 +282,6 @@ class ECUServer:
 
     def _handle_routine_control(self, request: udsoncan.Request) -> Response:
         """Handle 0x31 - RoutineControl."""
-        if not self.session_manager.is_programming:
-            return Response(
-                services.RoutineControl, ResponseCode.ServiceNotSupportedInActiveSession
-            )
-
         subfunction = request.subfunction
         if len(request.data) < 2:
             return Response(
@@ -259,27 +289,34 @@ class ECUServer:
             )
 
         routine_id = struct.unpack(">H", request.data[:2])[0]
+        session = self.session_manager.current_session.value
 
-        if routine_id == 0xFF00:  # Erase Memory
-            if subfunction == services.RoutineControl.ControlType.startRoutine:
-                logger.info("ROUTINE: Erasing Memory...")
+        # Use our new RoutineStore logic
+        success = False
+        response_data = b""
+        nrc = 0x00
+
+        if subfunction == services.RoutineControl.ControlType.startRoutine:
+            success, response_data, nrc = self.routine_store.start_routine(
+                routine_id, session, request.data[2:]
+            )
+            # Side effect: Erase Memory resets flash buffer
+            if success and routine_id == 0xFF00:
                 self.flash_buffer = bytearray()
-                return Response(
-                    services.RoutineControl,
-                    ResponseCode.PositiveResponse,
-                    data=bytes([subfunction]) + struct.pack(">H", routine_id),
-                )
 
-        elif routine_id == 0xFF01:  # Check Dependencies
-            if subfunction == services.RoutineControl.ControlType.startRoutine:
-                logger.info("ROUTINE: Checking Dependencies...")
-                return Response(
-                    services.RoutineControl,
-                    ResponseCode.PositiveResponse,
-                    data=bytes([subfunction]) + struct.pack(">H", routine_id) + b"\x00",
-                )  # Success
+        elif subfunction == services.RoutineControl.ControlType.stopRoutine:
+            success, response_data, nrc = self.routine_store.stop_routine(routine_id, session)
 
-        return Response(services.RoutineControl, ResponseCode.RequestOutOfRange)
+        elif subfunction == services.RoutineControl.ControlType.requestRoutineResults:
+            success, response_data, nrc = self.routine_store.get_results(routine_id, session)
+
+        else:
+            return Response(services.RoutineControl, ResponseCode.SubFunctionNotSupported)
+
+        if not success:
+            return Response(services.RoutineControl, nrc)
+
+        return Response(services.RoutineControl, ResponseCode.PositiveResponse, data=response_data)
 
     def _handle_request_download(self, request: udsoncan.Request) -> Response:
         """Handle 0x34 - RequestDownload."""
@@ -359,25 +396,155 @@ class ECUServer:
         self.transfer_active = False
         return Response(services.RequestTransferExit, ResponseCode.PositiveResponse)
 
+    def _handle_read_memory(self, request: udsoncan.Request) -> Response:
+        """Handle 0x23 - ReadMemoryByAddress."""
+        if self.security_manager.locked:
+            return Response(services.ReadMemoryByAddress, ResponseCode.SecurityAccessDenied)
+
+        # udsoncan request.data for 0x23: [ALFI] [Address...] [Size...]
+        if len(request.data) < 1:
+            return Response(services.ReadMemoryByAddress, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+
+        alfi = request.data[0]
+        addr_len = (alfi >> 4) & 0x0F
+        size_len = alfi & 0x0F
+
+        if len(request.data) < 1 + addr_len + size_len:
+            return Response(services.ReadMemoryByAddress, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+
+        address = int.from_bytes(request.data[1 : 1 + addr_len], "big")
+        size = int.from_bytes(request.data[1 + addr_len : 1 + addr_len + size_len], "big")
+
+        success, data, nrc = self.memory_manager.read_memory(address, size)
+        if not success:
+            return Response(services.ReadMemoryByAddress, nrc)
+
+        return Response(services.ReadMemoryByAddress, ResponseCode.PositiveResponse, data=data)
+
+    def _handle_comm_control(self, request: udsoncan.Request) -> Response:
+        """Handle 0x28 - CommunicationControl."""
+        subfunction = request.subfunction
+        if len(request.data) < 1:
+            return Response(services.CommunicationControl, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+
+        comm_type = request.data[0]
+        logger.info(f"COMM: Subfunction {subfunction} (CommType: {comm_type})")
+        
+        # 0x00: EnableRxAndTx
+        # 0x01: EnableRxAndDisableTx
+        # 0x02: DisableRxAndEnableTx
+        # 0x03: DisableRxAndTx
+        if subfunction == services.CommunicationControl.ControlType.enableRxAndTxTransmission:
+            self.comm_enabled = True
+            logger.info("COMM: [bold green]RX/TX ENABLED[/]")
+        elif subfunction == services.CommunicationControl.ControlType.disableRxAndTxTransmission:
+            self.comm_enabled = False
+            logger.info("COMM: [bold red]RX/TX DISABLED[/]")
+        elif subfunction == services.CommunicationControl.ControlType.enableRxAndDisableTxTransmission:
+            self.comm_enabled = True # Simplified: treat as full enable
+            logger.info("COMM: [bold green]RX ENABLED, TX DISABLED[/]")
+        elif subfunction == services.CommunicationControl.ControlType.disableRxAndEnableTxTransmission:
+            self.comm_enabled = True # Simplified: treat as full enable
+            logger.info("COMM: [bold red]RX DISABLED, TX ENABLED[/]")
+        else:
+            return Response(services.CommunicationControl, ResponseCode.SubFunctionNotSupported)
+        
+        return Response(services.CommunicationControl, ResponseCode.PositiveResponse, data=bytes([subfunction]))
+
+    def _handle_io_control(self, request: udsoncan.Request) -> Response:
+        """Handle 0x2F - InputOutputControlByIdentifier."""
+        if self.security_manager.locked:
+            return Response(services.InputOutputControlByIdentifier, ResponseCode.SecurityAccessDenied)
+
+        # Payload: [DID High] [DID Low] [CtrlType] [Params...]
+        if len(request.data) < 3:
+            return Response(services.InputOutputControlByIdentifier, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+
+        did = struct.unpack(">H", request.data[:2])[0]
+        ctrl_type = request.data[2]
+        params = request.data[3:]
+
+        success, data, nrc = self.io_manager.handle_io_control(did, ctrl_type, params)
+        if not success:
+            return Response(services.InputOutputControlByIdentifier, nrc)
+
+        return Response(services.InputOutputControlByIdentifier, ResponseCode.PositiveResponse, data=data)
+
+    def _handle_request_upload(self, request: udsoncan.Request) -> Response:
+        """Handle 0x35 - RequestUpload."""
+        if self.security_manager.locked:
+            return Response(services.RequestUpload, ResponseCode.SecurityAccessDenied)
+
+        if len(request.data) < 2:
+            return Response(services.RequestUpload, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+
+        # payload: [DFI] [ALFI] [Address...] [Size...]
+        alfi = request.data[1]
+        addr_len = (alfi >> 4) & 0x0F
+        size_len = alfi & 0x0F
+
+        address = int.from_bytes(request.data[2 : 2 + addr_len], "big")
+        size = int.from_bytes(request.data[2 + addr_len : 2 + addr_len + size_len], "big")
+
+        success, data, nrc = self.memory_manager.request_upload(address, size)
+        if not success:
+            return Response(services.RequestUpload, nrc)
+
+        return Response(services.RequestUpload, ResponseCode.PositiveResponse, data=data)
+
+    def _handle_file_transfer(self, request: udsoncan.Request) -> Response:
+        """Handle 0x38 - RequestFileTransfer."""
+        subfunction = request.subfunction
+        logger.info(f"FILE: Requesting subfunction {subfunction}")
+        
+        # Simulation: always allow 0x01 (Add file) and return a dummy block size
+        if subfunction == 0x01:
+            return Response(services.RequestFileTransfer, ResponseCode.PositiveResponse, data=bytes([subfunction]) + b"\x00\x02\x00")
+        
+        return Response(services.RequestFileTransfer, ResponseCode.SubFunctionNotSupported)
+
+    def send_response(self, response: Response) -> None:
+        """Sends a UDS response over the connection."""
+        logger.info(f"Sending Response: {response}")
+        self.connection.send(response.get_payload())
+
     def process_request(self, payload: bytes) -> None:
         """Decode and handle an incoming UDS request."""
         if not payload:
             return
 
+        # Check for Suppress Positive Response bit (0x80)
+        suppress_pos_resp = (payload[1] & 0x80) != 0
+        actual_subfunction = payload[1] & 0x7F if len(payload) > 1 else 0
+        
+        # Reconstruct request without SPR bit for handler
+        request_payload = bytes([payload[0]])
+        if len(payload) > 1:
+            request_payload += bytes([actual_subfunction]) + payload[2:]
+            
         try:
-            req = udsoncan.Request.from_payload(payload)
-            logger.info(f"Received Request: {req}")
+            request = udsoncan.Request.from_payload(request_payload)
+            logger.info(f"Received Request: {request}")
+            handler = self.services.get(request.service.request_id)
 
-            if req.service.request_id in self.services:
-                response = self.services[req.service.request_id](req)
+            if handler:
+                response = handler(request)
+                if response:
+                    # Respect SPR bit
+                    if suppress_pos_resp and response.code == ResponseCode.PositiveResponse:
+                        logger.info(f"SPR: Suppressing positive response for {request.service.get_name()}")
+                        return
+                        
+                    self.send_response(response)
             else:
-                response = udsoncan.Response(req.service, ResponseCode.ServiceNotSupported)
-
-            logger.info(f"Sending Response: {response}")
-            self.connection.send(response.get_payload())
-
+                self.send_response(Response(request.service, ResponseCode.ServiceNotSupported))
         except Exception as e:
             logger.error(f"Error processing request: {e}")
+            import traceback
+            traceback.print_exc()
+            # Send a general reject if an unhandled exception occurs
+            self.send_response(Response(services.DiagnosticSessionControl, ResponseCode.GeneralReject))
+
 
     def run(self) -> None:
         """Main loop for the server."""

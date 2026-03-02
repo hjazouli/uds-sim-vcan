@@ -32,12 +32,12 @@ class SessionManager:
             new_session = DiagnosticSession(session)
             if new_session != self.current_session:
                 logger.info(
-                    f"Session transition: {self.current_session.name} -> {new_session.name}"
+                    f"Session transition: [bold]{self.current_session.name}[/] -> [bold cyan]{new_session.name}[/]"
                 )
                 self.current_session = new_session
                 self.reset_timer()
         except ValueError:
-            logger.error(f"Invalid session requested: 0x{session:02X}")
+            logger.error(f"Invalid session requested: [red]0x{session:02X}[/]")
 
     def reset_timer(self) -> None:
         """Reset the S3 timer (Tester Present received)."""
@@ -48,7 +48,7 @@ class SessionManager:
         if self.current_session != DiagnosticSession.DEFAULT:
             if time.time() - self.last_tester_present > self.S3_TIMEOUT:
                 logger.warning(
-                    f"Session {self.current_session.name} timed out. Resetting to DEFAULT."
+                    f"Session [yellow]{self.current_session.name}[/] timed out. [red]Resetting to DEFAULT[/]."
                 )
                 self.current_session = DiagnosticSession.DEFAULT
                 self.on_timeout()
@@ -57,7 +57,7 @@ class SessionManager:
         """Force reset to default session."""
         self.current_session = DiagnosticSession.DEFAULT
         self.last_tester_present = time.time()
-        logger.info("Session manager reset to DEFAULT")
+        logger.info("[bold red]Session manager reset to DEFAULT[/]")
 
     @property
     def is_default(self) -> bool:

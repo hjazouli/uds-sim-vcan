@@ -36,20 +36,25 @@ The project is organized into self-contained logical units, bundling core logic 
 
 ## UDS Services Implemented
 
-| Service ID | Service Name             | Subfunctions / Details                                             |
-| ---------- | ------------------------ | ------------------------------------------------------------------ |
-| **0x10**   | DiagnosticSessionControl | 0x01 (Default), 0x02 (Programming), 0x03 (Extended)                |
-| **0x11**   | ECUReset                 | 0x01 (HardReset), 0x03 (SoftReset).                                |
-| **0x27**   | SecurityAccess           | Challenge-Response logic. Locks after 3 fails.                     |
-| **0x22**   | ReadDataByIdentifier     | Support for multiple DIDs (VIN, Serial Number, Speed).             |
-| **0x2E**   | WriteDataByIdentifier    | Restricted by Security Access. Supports VIN and Brake Torque.      |
-| **0x14**   | ClearDiagnosticInfo      | Wipes the current DTC database.                                    |
-| **0x19**   | ReadDTCInformation       | 0x02 (ReportByStatusMask).                                         |
-| **0x3E**   | TesterPresent            | Keeps the non-default session active (Resets S3 timer).            |
-| **0x31**   | RoutineControl           | 0x01 (StartRoutine). Supports Erase Memory and Check Dependencies. |
-| **0x34**   | RequestDownload          | Initializes firmware transfer.                                     |
-| **0x36**   | TransferData             | Streams firmware blocks with sequence counter validation.          |
-| **0x37**   | RequestTransferExit      | Finalizes the memory transfer process.                             |
+| Service ID | Service Name             | Subfunctions / Details                                       |
+| ---------- | ------------------------ | ------------------------------------------------------------ |
+| **0x10**   | DiagnosticSessionControl | 0x01 (Default), 0x02 (Programming), 0x03 (Extended)          |
+| **0x11**   | ECUReset                 | 0x01 (HardReset), 0x03 (SoftReset)                           |
+| **0x14**   | ClearDiagnosticInfo      | Wipes the current DTC database                               |
+| **0x19**   | ReadDTCInformation       | 0x02 (ReportByStatusMask)                                    |
+| **0x22**   | ReadDataByIdentifier     | Support for multiple DIDs (VIN, Serial, Speed)               |
+| **0x23**   | ReadMemoryByAddress      | Dynamic memory access (FLASH/RAM regions)                    |
+| **0x27**   | SecurityAccess           | Challenge-Response logic. Locks after 3 fails                |
+| **0x28**   | CommunicationControl     | 0x00 (Enable), 0x03 (Disable) Rx/Tx                          |
+| **0x2E**   | WriteDataByIdentifier    | Restricted by Security Access. Supports VIN and Brake Torque |
+| **0x2F**   | IOCBI                    | Input Output Control (Fan, Fuel Pump, Lights)                |
+| **0x31**   | RoutineControl           | Multiple RIDs (Erase Memory, Self Test, Dependencies)        |
+| **0x34**   | RequestDownload          | Initializes firmware transfer                                |
+| **0x35**   | RequestUpload            | Prepares data retrieval from ECU                             |
+| **0x36**   | TransferData             | Streams firmware blocks with sequence counter validation     |
+| **0x37**   | RequestTransferExit      | Finalizes the memory transfer process                        |
+| **0x38**   | RequestFileTransfer      | 0x01 (Add File) simulation                                   |
+| **0x3E**   | TesterPresent            | Keeps the non-default session active (Resets S3 timer)       |
 
 ---
 
