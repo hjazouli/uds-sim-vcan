@@ -1,0 +1,11 @@
+python-can
+can-isotp
+udsoncan
+cantools
+pandas
+jinja2
+pytest
+pytest-html
+flake8
+mypy
+black
