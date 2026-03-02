@@ -24,7 +24,7 @@
   ],
   "dtcs": [
     { "code": "0x0A78", "name": "P0A78", "description": "Drive Motor Inverter Performance", "status": 1 },
-    { "code": "0x0A94", "name": "P0A94", "description": "DC/DC Converter Performance", "status": 0 },
+    { "code": "0x0A94", "name": "P0A94", "description": "DC/DC Converter Performance", "status": 1 },
     { "code": "0x0C05", "name": "P0C05", "description": "Drive Motor A Phase Current High", "status": 4 },
     { "code": "0x0C17", "name": "P0C17", "description": "Drive Motor Position Sensor Not Learned", "status": 8 },
     { "code": "0x0A0D", "name": "P0A0D", "description": "High Voltage System Interlock Circuit High", "status": 1 },
@@ -36,7 +36,8 @@
     { "id": "0x0208", "name": "Resolver Offset Calibration", "sessions": [3] },
     { "id": "0x0209", "name": "Gate Driver Self-Test", "sessions": [1, 3] },
     { "id": "0x020A", "name": "IGBT Open/Short Circuit Test", "sessions": [3] },
-    { "id": "0x0203", "name": "System Self-Test", "sessions": [1, 2, 3] }
+    { "id": "0x0203", "name": "System Self-Test", "sessions": [1, 2, 3] },
+    { "id": "0xFF01", "name": "Check Dependencies", "sessions": [2] }
   ],
   "io_controls": [
     { "id": "0x0101", "name": "Discharge Contactor", "size": 1 },

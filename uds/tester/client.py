@@ -53,6 +53,7 @@ def get_config_from_json(path="uds/config/ecu_diag.json"):
     except Exception as e:
         logger.error(f"Failed to load DID config: {e}")
         
+    config["data_identifiers"][0xFFFF] = "B"
     return config
 
 # Shared config will be initialized in the class to allow for dynamic reloading

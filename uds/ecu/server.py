@@ -122,6 +122,9 @@ class ECUServer:
         reset_type = request.subfunction
         logger.info(f"RESET: Type {reset_type} requested")
 
+        if reset_type == 0x01 and self.session_manager.current_session == DiagnosticSession.DEFAULT:
+            return Response(services.ECUReset, ResponseCode.ServiceNotSupportedInActiveSession)
+
         if reset_type == services.ECUReset.ResetType.hardReset:
             self.did_store.reset_to_defaults()
             self.dtc_store.reset()
@@ -513,17 +516,30 @@ class ECUServer:
         if not payload:
             return
 
-        # Check for Suppress Positive Response bit (0x80)
-        suppress_pos_resp = (payload[1] & 0x80) != 0
-        actual_subfunction = payload[1] & 0x7F if len(payload) > 1 else 0
+        sid = payload[0]
+        # Services that officially support subfunctions (and thus the SPR bit)
+        SERVICES_WITH_SUBFUNCTIONS = [
+            services.DiagnosticSessionControl.request_id,
+            services.ECUReset.request_id,
+            services.SecurityAccess.request_id,
+            services.CommunicationControl.request_id,
+            services.TesterPresent.request_id,
+            services.RoutineControl.request_id,
+            services.ReadDTCInformation.request_id,
+            0x85, # ControlDTCSetting
+        ]
+
+        suppress_pos_resp = False
+        actual_payload = payload
         
-        # Reconstruct request without SPR bit for handler
-        request_payload = bytes([payload[0]])
-        if len(payload) > 1:
-            request_payload += bytes([actual_subfunction]) + payload[2:]
-            
+        if sid in SERVICES_WITH_SUBFUNCTIONS and len(payload) > 1:
+            suppress_pos_resp = (payload[1] & 0x80) != 0
+            # If SPR bit is set, we must strip it before passing it to the handler/udsoncan
+            if suppress_pos_resp:
+                actual_payload = bytes([payload[0], payload[1] & 0x7F]) + payload[2:]
+
         try:
-            request = udsoncan.Request.from_payload(request_payload)
+            request = udsoncan.Request.from_payload(actual_payload)
             logger.info(f"Received Request: {request}")
             handler = self.services.get(request.service.request_id)
 

@@ -57,11 +57,21 @@ class DIDStore:
         return b""
 
     def write(self, did: int, data: bytes) -> None:
-        """Write DID value."""
+        """Write DID value with length validation."""
         if did not in self._dids:
             raise KeyError(f"DID 0x{did:04X} not found")
             
-        # Simplistic write logic
+        # Find expected size from config
+        expected_size = None
+        for d in self._dids_config:
+            did_id = int(d["id"], 16) if isinstance(d["id"], str) else d["id"]
+            if did_id == did:
+                expected_size = d.get("size")
+                break
+        
+        if expected_size is not None and len(data) != expected_size:
+            raise ValueError(f"Invalid data length for DID 0x{did:04X}: expected {expected_size}, got {len(data)}")
+
         if did == 0xF190: # VIN
             self._dids[did] = data.decode('ascii')
         else:

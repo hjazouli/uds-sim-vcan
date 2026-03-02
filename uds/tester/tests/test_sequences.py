@@ -47,14 +47,14 @@ def test_sequence_1_happy_path(uds_client: UDSClient):
     resp = uds_client.send_key(1, key)
     assert resp.positive, f"Security Access failed: {resp.code_name}"
 
-    # 5. Read all DIDs
-    dids = [0xF190, 0xF18C, 0xF187, 0xF40D, 0xD001, 0xD002]
+    # 5. Read all Inverter-specific DIDs
+    dids = [0xF190, 0xF18C, 0x4001, 0x4003, 0x4004, 0x4005]
     for did in dids:
         resp = uds_client.read_did(did)
         assert resp.positive, f"Failed to read DID 0x{did:04X}"
         if did == 0xF190:
             assert len(resp.data) == 19
-        elif did == 0xF187:
+        elif did == 0x4001:
             assert len(resp.data) == 4
 
     # 6. Write new VIN
@@ -71,8 +71,8 @@ def test_sequence_1_happy_path(uds_client: UDSClient):
     # 7. Read DTCs
     resp = uds_client.read_dtcs()
     assert resp.positive
-    # At least 3 DTCs should be returned (1 byte mask + 3 * 4 bytes per DTC = 13 bytes total)
-    assert len(resp.data) >= 13
+    # 2-byte header + 6 * 4 bytes per DTC = 26 bytes total
+    assert len(resp.data) == 26
 
     # 8. Clear DTCs
     resp = uds_client.clear_dtcs()
@@ -211,10 +211,10 @@ def test_sequence_7_flashing_flow(uds_client: UDSClient):
     assert resp.positive
 
     # 4. Request Download (0x34)
-    # Memory address 0x1000, size 1024 bytes
+    # Use real flash start address from JSON: 0x08000000
     from udsoncan import MemoryLocation
 
-    mem_loc = MemoryLocation(address=0x1000, memorysize=1024)
+    mem_loc = MemoryLocation(address=0x08000000, memorysize=512)
     resp = uds_client.request_download(mem_loc)
     assert resp.positive
 
