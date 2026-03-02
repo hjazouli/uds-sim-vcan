@@ -2,9 +2,10 @@ import logging
 from rich.logging import RichHandler
 from rich.console import Console
 
+
 def setup_logging(level=logging.INFO):
     """Sets up a beautiful terminal logging experience using 'rich'."""
-    
+
     # We use a custom console to ensure colors work correctly in different terminals
     console = Console(width=120)
 
@@ -14,7 +15,7 @@ def setup_logging(level=logging.INFO):
         rich_tracebacks=True,
         markup=True,
         show_time=True,
-        show_path=False, # We usually don't need the file path for these types of logs
+        show_path=False,  # We usually don't need the file path for these types of logs
     )
 
     # Reset existing handlers to avoid double logging
@@ -22,20 +23,16 @@ def setup_logging(level=logging.INFO):
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
 
-    logging.basicConfig(
-        level=level,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[rich_handler]
-    )
+    logging.basicConfig(level=level, format="%(message)s", datefmt="[%X]", handlers=[rich_handler])
 
     # Specific tweaks for third-party noise
     logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("udsoncan").setLevel(logging.WARNING)
     logging.getLogger("UDSClient").setLevel(logging.WARNING)
-    
+
     return logging.getLogger("UDS")
+
 
 if __name__ == "__main__":
     # Test session

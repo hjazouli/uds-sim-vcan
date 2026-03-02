@@ -2,6 +2,7 @@ import json
 import os
 from typing import List, Dict, Optional
 
+
 class DTCStore:
     """
     Simulated DTC database (Diagnostic Trouble Codes).
@@ -17,17 +18,19 @@ class DTCStore:
     def _load_config(self):
         try:
             if os.path.exists(self.config_path):
-                with open(self.config_path, 'r') as f:
+                with open(self.config_path, "r") as f:
                     config = json.load(f)
                     raw_dtcs = config.get("dtcs", [])
                     self._initial_dtcs = []
                     for d in raw_dtcs:
                         code = int(d["code"], 16) if isinstance(d["code"], str) else d["code"]
-                        self._initial_dtcs.append({
-                            "code": code,
-                            "status": d.get("status", 0x01),
-                            "name": d.get("name", "Unknown DTC")
-                        })
+                        self._initial_dtcs.append(
+                            {
+                                "code": code,
+                                "status": d.get("status", 0x01),
+                                "name": d.get("name", "Unknown DTC"),
+                            }
+                        )
         except Exception:
             # Fallback to defaults if file is missing
             self._initial_dtcs = [

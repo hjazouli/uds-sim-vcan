@@ -48,7 +48,9 @@ class SecurityManager:
                 return True
             else:
                 self.attempts += 1
-                logger.warning(f"Invalid key. Attempt [yellow]{self.attempts}/{self.MAX_ATTEMPTS}[/]")
+                logger.warning(
+                    f"Invalid key. Attempt [yellow]{self.attempts}/{self.MAX_ATTEMPTS}[/]"
+                )
                 if self.attempts >= self.MAX_ATTEMPTS:
                     self.lockout_active = True
                     logger.error("[bold red]Security access LOCKED OUT[/] (too many attempts)")

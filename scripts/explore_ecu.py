@@ -3,6 +3,7 @@
 Diagnostic File Viewer (ECU Explorer).
 Reads the central diagnostic configuration and displays the ECU capabilities.
 """
+
 import json
 import os
 import sys
@@ -13,23 +14,26 @@ sys.path.append(os.getcwd())
 from uds.tools.logging_config import setup_logging
 import logging
 
+
 def main():
     setup_logging()
     logger = logging.getLogger("ECUExplorer")
-    
+
     config_path = "uds/config/ecu_diag.json"
-    
+
     if not os.path.exists(config_path):
         logger.error(f"Diagnostic file not found at {config_path}")
         return
 
-    with open(config_path, 'r') as f:
+    with open(config_path, "r") as f:
         config = json.load(f)
 
     # Header
     ecu = config.get("ecu", {})
     logger.info(f" ECU: [bold cyan]{ecu.get('name')}[/]")
-    logger.info(f" HW: [bold]{ecu.get('hardware_version')}[/] | SW: [bold]{ecu.get('software_version')}[/]")
+    logger.info(
+        f" HW: [bold]{ecu.get('hardware_version')}[/] | SW: [bold]{ecu.get('software_version')}[/]"
+    )
     logger.info("-" * 40)
 
     # Sessions
@@ -59,6 +63,7 @@ def main():
 
     logger.info("-" * 40)
     logger.info("[bold green]Diagnostic discovery complete.[/]")
+
 
 if __name__ == "__main__":
     main()
