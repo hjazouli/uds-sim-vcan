@@ -9,6 +9,7 @@ import udsoncan
 import threading
 from uds.ecu.server import ECUServer
 
+
 @pytest.fixture(scope="session", autouse=True)
 def background_server():
     """Start the ECU server in a background thread for the duration of the test session."""
@@ -18,6 +19,7 @@ def background_server():
     time.sleep(1)  # Give the server time to start
     yield
     server.stop()
+
 
 @pytest.fixture(scope="module")
 def uds_client():
@@ -156,7 +158,7 @@ def test_sequence_4_wrong_session_service_rejection(uds_client: UDSClient):
     # 4. Switch to ExtendedSession and verify they work
     resp = uds_client.change_session(0x03)
     assert resp.positive
-    
+
     resp = uds_client.ecu_reset(0x01)
     assert resp.positive
 

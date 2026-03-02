@@ -32,7 +32,6 @@ jobs:
 
   logic-guard:
     name: Logic Check (Unit Tests)
-    needs: quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +51,6 @@ jobs:
 
   system-guard:
     name: System Check (Functional Sequences)
-    needs: logic-guard
     runs-on: ubuntu-latest
     env:
       UDS_FORCE_VIRTUAL: "1" # Use pure-python virtual bus for CI stability

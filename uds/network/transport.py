@@ -28,6 +28,7 @@ logger = logging.getLogger("transport")
 # Detect OS → choose backend
 # ---------------------------------------------------------------------------
 import os
+
 _os = platform.system()
 # Force virtual mode if not on Linux OR if UDS_FORCE_VIRTUAL is set to 1
 USE_VIRTUAL: bool = (_os != "Linux") or (os.environ.get("UDS_FORCE_VIRTUAL") == "1")
@@ -36,7 +37,9 @@ CHANNEL: str = "vcan0"  # Virtual CAN channel name
 if USE_VIRTUAL:
     logger.info(f"[transport] OS={_os}  → using python-can virtual bus (channel={CHANNEL!r})")
 else:
-    logger.info(f"[transport] OS={_os}  → using SocketCAN / isotp kernel socket (channel={CHANNEL!r})")
+    logger.info(
+        f"[transport] OS={_os}  → using SocketCAN / isotp kernel socket (channel={CHANNEL!r})"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +72,16 @@ class VirtualIsoTPConnection:
             self._bus_owned = False
         else:
             # Use virtual bus for development/sim mode
-            self._bus = can.interface.Bus(channel=channel, interface="virtual", receive_own_messages=False)
+            self._bus = can.interface.Bus(
+                channel=channel, interface="virtual", receive_own_messages=False
+            )
             self._bus_owned = True
 
         addr = isotp.Address(rxid=rxid, txid=txid)
         # New – pass a plain dict of the parameters (compatible with all isotp versions)
         stack_params = {
-            "stmin": 5,          # 5 ms separation time
-            "blocksize": 10,     # 10‑block flow control
+            "stmin": 5,  # 5 ms separation time
+            "blocksize": 10,  # 10‑block flow control
             "tx_padding": 0xCC,  # padding byte
         }
         # Use CanStack instead of NotifierBasedCanStack to avoid Notifier conflicts
@@ -111,10 +116,12 @@ class VirtualIsoTPConnection:
         deadline = None
         if timeout is not None:
             import time
+
             deadline = time.time() + timeout
         self._stack.send(data)
         # Drive the stack until all frames are transmitted
         import time
+
         while self._stack.transmitting():
             self._stack.process()
             time.sleep(0.001)
@@ -123,6 +130,7 @@ class VirtualIsoTPConnection:
 
     def wait_frame(self, timeout: float = 2.0, exception: bool = False) -> Optional[bytes]:
         import time
+
         deadline = time.time() + timeout
         while time.time() < deadline:
             self._stack.process()

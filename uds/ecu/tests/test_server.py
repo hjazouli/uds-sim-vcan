@@ -4,6 +4,7 @@ test_ecu_server.py — Unit tests for ECUServer handler logic.
 The fixture mocks the transport layer so no vcan0 or virtual bus is required.
 These tests run on any OS (macOS, Windows, Linux) in CI without CAN hardware.
 """
+
 import pytest
 from unittest.mock import MagicMock, patch
 import udsoncan
@@ -48,13 +49,17 @@ def test_handle_session_control(server):
 
 def test_handle_read_did(server):
     # Test reading VIN (0xF190)
-    request = udsoncan.Request(udsoncan.services.ReadDataByIdentifier, data=struct.pack(">H", 0xF190))
+    request = udsoncan.Request(
+        udsoncan.services.ReadDataByIdentifier, data=struct.pack(">H", 0xF190)
+    )
     response = server._handle_read_did(request)
     assert response.code == udsoncan.Response.Code.PositiveResponse
     assert b"WBA12345678901234" in response.data
 
     # Test reading non-existent DID
-    request = udsoncan.Request(udsoncan.services.ReadDataByIdentifier, data=struct.pack(">H", 0xFFFF))
+    request = udsoncan.Request(
+        udsoncan.services.ReadDataByIdentifier, data=struct.pack(">H", 0xFFFF)
+    )
     response = server._handle_read_did(request)
     assert response.code == udsoncan.Response.Code.RequestOutOfRange
 

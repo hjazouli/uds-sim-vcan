@@ -29,7 +29,13 @@ class ECUServer:
     UDS ECU Server simulation.
     """
 
-    def __init__(self, interface: str = CHANNEL, rxid: int = 0x7E0, txid: int = 0x7E8, bus: Optional[can.BusABC] = None) -> None:
+    def __init__(
+        self,
+        interface: str = CHANNEL,
+        rxid: int = 0x7E0,
+        txid: int = 0x7E8,
+        bus: Optional[can.BusABC] = None,
+    ) -> None:
         self.interface = interface
         self.rxid = rxid
         self.txid = txid
@@ -63,10 +69,7 @@ class ECUServer:
         # CAN bus and connection (OS-agnostic via transport factory)
         try:
             self.connection, self._transport_extras = create_connection(
-                rxid=self.rxid,
-                txid=self.txid,
-                interface=self.interface,
-                bus=bus
+                rxid=self.rxid, txid=self.txid, interface=self.interface, bus=bus
             )
         except Exception as e:
             logger.error(f"Failed to initialize transport: {e}")
@@ -80,9 +83,7 @@ class ECUServer:
         self.transfer_active = False
         self.flash_buffer = bytearray()
 
-    def _handle_session_control(
-        self, request: udsoncan.Request
-    ) -> Response:
+    def _handle_session_control(self, request: udsoncan.Request) -> Response:
         """Handle 0x10 - DiagnosticSessionControl."""
         session_type = request.subfunction
         if session_type in [
@@ -121,9 +122,7 @@ class ECUServer:
 
         return Response(services.ECUReset, ResponseCode.SubFunctionNotSupported)
 
-    def _handle_security_access(
-        self, request: udsoncan.Request
-    ) -> Response:
+    def _handle_security_access(self, request: udsoncan.Request) -> Response:
         """Handle 0x27 - SecurityAccess."""
         if not (self.session_manager.is_extended or self.session_manager.is_programming):
             return Response(
@@ -163,9 +162,11 @@ class ECUServer:
         """Handle 0x22 - ReadDataByIdentifier."""
         payload = request.data
         if not payload or len(payload) % 2 != 0:
-            return Response(services.ReadDataByIdentifier, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
-        
-        dids = [struct.unpack(">H", payload[i:i+2])[0] for i in range(0, len(payload), 2)]
+            return Response(
+                services.ReadDataByIdentifier, ResponseCode.IncorrectMessageLengthOrInvalidFormat
+            )
+
+        dids = [struct.unpack(">H", payload[i : i + 2])[0] for i in range(0, len(payload), 2)]
         response_data = b""
         for did in dids:
             try:
@@ -185,8 +186,10 @@ class ECUServer:
 
         payload = request.data
         if len(payload) < 2:
-            return Response(services.WriteDataByIdentifier, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
-            
+            return Response(
+                services.WriteDataByIdentifier, ResponseCode.IncorrectMessageLengthOrInvalidFormat
+            )
+
         did = struct.unpack(">H", payload[:2])[0]
         data = payload[2:]
         try:
@@ -215,7 +218,9 @@ class ECUServer:
         subfunction = request.subfunction
         if subfunction == 0x02:  # reportDTCByStatusMask
             if not request.data:
-                return Response(services.ReadDTCInformation, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
+                return Response(
+                    services.ReadDTCInformation, ResponseCode.IncorrectMessageLengthOrInvalidFormat
+                )
             mask = request.data[0]
             matching_dtcs = self.dtc_store.get_dtcs_by_status_mask(mask)
 
@@ -243,60 +248,80 @@ class ECUServer:
     def _handle_routine_control(self, request: udsoncan.Request) -> Response:
         """Handle 0x31 - RoutineControl."""
         if not self.session_manager.is_programming:
-            return Response(services.RoutineControl, ResponseCode.ServiceNotSupportedInActiveSession)
+            return Response(
+                services.RoutineControl, ResponseCode.ServiceNotSupportedInActiveSession
+            )
 
         subfunction = request.subfunction
         if len(request.data) < 2:
-            return Response(services.RoutineControl, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
-            
+            return Response(
+                services.RoutineControl, ResponseCode.IncorrectMessageLengthOrInvalidFormat
+            )
+
         routine_id = struct.unpack(">H", request.data[:2])[0]
 
         if routine_id == 0xFF00:  # Erase Memory
             if subfunction == services.RoutineControl.ControlType.startRoutine:
                 logger.info("ROUTINE: Erasing Memory...")
                 self.flash_buffer = bytearray()
-                return Response(services.RoutineControl, ResponseCode.PositiveResponse, data=bytes([subfunction]) + struct.pack(">H", routine_id))
-        
+                return Response(
+                    services.RoutineControl,
+                    ResponseCode.PositiveResponse,
+                    data=bytes([subfunction]) + struct.pack(">H", routine_id),
+                )
+
         elif routine_id == 0xFF01:  # Check Dependencies
             if subfunction == services.RoutineControl.ControlType.startRoutine:
                 logger.info("ROUTINE: Checking Dependencies...")
-                return Response(services.RoutineControl, ResponseCode.PositiveResponse, data=bytes([subfunction]) + struct.pack(">H", routine_id) + b"\x00") # Success
+                return Response(
+                    services.RoutineControl,
+                    ResponseCode.PositiveResponse,
+                    data=bytes([subfunction]) + struct.pack(">H", routine_id) + b"\x00",
+                )  # Success
 
         return Response(services.RoutineControl, ResponseCode.RequestOutOfRange)
 
     def _handle_request_download(self, request: udsoncan.Request) -> Response:
         """Handle 0x34 - RequestDownload."""
         if not self.session_manager.is_programming:
-            return Response(services.RequestDownload, ResponseCode.ServiceNotSupportedInActiveSession)
+            return Response(
+                services.RequestDownload, ResponseCode.ServiceNotSupportedInActiveSession
+            )
 
         if self.security_manager.locked:
             return Response(services.RequestDownload, ResponseCode.SecurityAccessDenied)
 
         # payload: [DFI] [ALFI] [Address...] [Size...]
         if len(request.data) < 2:
-            return Response(services.RequestDownload, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
-            
+            return Response(
+                services.RequestDownload, ResponseCode.IncorrectMessageLengthOrInvalidFormat
+            )
+
         dfi = request.data[0]
         alfi = request.data[1]
         addr_len = (alfi >> 4) & 0x0F
         size_len = alfi & 0x0F
-        
+
         if len(request.data) < 2 + addr_len + size_len:
-             return Response(services.RequestDownload, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
-             
+            return Response(
+                services.RequestDownload, ResponseCode.IncorrectMessageLengthOrInvalidFormat
+            )
+
         addr_bytes = request.data[2 : 2 + addr_len]
         size_bytes = request.data[2 + addr_len : 2 + addr_len + size_len]
-        
+
         address = int.from_bytes(addr_bytes, "big")
         size = int.from_bytes(size_bytes, "big")
 
         logger.info(f"DOWNLOAD: Request received. Address: {hex(address)}, Size: {size}")
         self.transfer_active = True
         self.expected_seq_counter = 1
-        
+
         # Return Max Number of Block Length (Length Format Identifier = 0x20 -> 2 bytes)
         # We allow blocks up to 512 bytes for this simulation
-        return Response(services.RequestDownload, ResponseCode.PositiveResponse, data=b"\x20\x02\x00")
+        return Response(
+            services.RequestDownload, ResponseCode.PositiveResponse, data=b"\x20\x02\x00"
+        )
 
     def _handle_transfer_data(self, request: udsoncan.Request) -> Response:
         """Handle 0x36 - TransferData."""
@@ -304,20 +329,26 @@ class ECUServer:
             return Response(services.TransferData, ResponseCode.RequestSequenceError)
 
         if not request.data:
-            return Response(services.TransferData, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
-            
+            return Response(
+                services.TransferData, ResponseCode.IncorrectMessageLengthOrInvalidFormat
+            )
+
         seq_counter = request.data[0]
         data_payload = request.data[1:]
-        
+
         if seq_counter != self.expected_seq_counter:
-            logger.error(f"TRANSFER: Wrong sequence counter. Expected {self.expected_seq_counter}, got {seq_counter}")
+            logger.error(
+                f"TRANSFER: Wrong sequence counter. Expected {self.expected_seq_counter}, got {seq_counter}"
+            )
             return Response(services.TransferData, ResponseCode.WrongBlockSequenceCounter)
 
         logger.info(f"TRANSFER: Received block {seq_counter} ({len(data_payload)} bytes)")
         self.flash_buffer.extend(data_payload)
-        
+
         self.expected_seq_counter = (self.expected_seq_counter + 1) % 0x100
-        return Response(services.TransferData, ResponseCode.PositiveResponse, data=bytes([seq_counter]))
+        return Response(
+            services.TransferData, ResponseCode.PositiveResponse, data=bytes([seq_counter])
+        )
 
     def _handle_request_transfer_exit(self, request: udsoncan.Request) -> Response:
         """Handle 0x37 - RequestTransferExit."""

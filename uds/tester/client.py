@@ -38,7 +38,13 @@ class UDSClient:
     Works on Linux (SocketCAN), macOS, and Windows (virtual bus).
     """
 
-    def __init__(self, interface: str = CHANNEL, txid: int = 0x7E0, rxid: int = 0x7E8, bus: Optional[can.BusABC] = None) -> None:
+    def __init__(
+        self,
+        interface: str = CHANNEL,
+        txid: int = 0x7E0,
+        rxid: int = 0x7E8,
+        bus: Optional[can.BusABC] = None,
+    ) -> None:
         self.interface = interface
         self.txid = txid
         self.rxid = rxid
@@ -46,10 +52,7 @@ class UDSClient:
         try:
             # Client TX → Server RX (0x7E0), Client RX ← Server TX (0x7E8)
             self.connection, self._transport_extras = create_connection(
-                rxid=self.rxid,
-                txid=self.txid,
-                interface=self.interface,
-                bus=bus
+                rxid=self.rxid, txid=self.txid, interface=self.interface, bus=bus
             )
         except Exception as e:
             logger.error(f"Failed to initialize transport for client: {e}")
@@ -83,7 +86,13 @@ class UDSClient:
             try:
                 return self.client.change_session(session)
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.DiagnosticSessionControl, ResponseCode.GeneralReject))
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(
+                        services.DiagnosticSessionControl, ResponseCode.GeneralReject
+                    ),
+                )
         raise RuntimeError("Client not opened")
 
     def request_seed(self, level: int = 1) -> bytes:
@@ -105,7 +114,11 @@ class UDSClient:
             try:
                 return self.client.send_key(level + 1, key)
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.SecurityAccess, ResponseCode.GeneralReject))
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.SecurityAccess, ResponseCode.GeneralReject),
+                )
         raise RuntimeError("Client not opened")
 
     def read_did(self, did: int) -> udsoncan.Response:
@@ -114,7 +127,11 @@ class UDSClient:
             try:
                 return self.client.read_data_by_identifier(did)
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.ReadDataByIdentifier, ResponseCode.GeneralReject))
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.ReadDataByIdentifier, ResponseCode.GeneralReject),
+                )
         raise RuntimeError("Client not opened")
 
     def write_did(self, did: int, data: Union[bytes, int, str]) -> udsoncan.Response:
@@ -126,9 +143,18 @@ class UDSClient:
                 return self.client.write_data_by_identifier(did, data)
             except Exception as e:
                 # If it's a codec error (e.g. wrong length), map it to NRC 0x13
-                if isinstance(e, ValueError) and ("length" in str(e).lower() or "string must be" in str(e).lower()):
-                    return udsoncan.Response(services.WriteDataByIdentifier, ResponseCode.IncorrectMessageLengthOrInvalidFormat)
-                return getattr(e, "response", udsoncan.Response(services.WriteDataByIdentifier, ResponseCode.GeneralReject))
+                if isinstance(e, ValueError) and (
+                    "length" in str(e).lower() or "string must be" in str(e).lower()
+                ):
+                    return udsoncan.Response(
+                        services.WriteDataByIdentifier,
+                        ResponseCode.IncorrectMessageLengthOrInvalidFormat,
+                    )
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.WriteDataByIdentifier, ResponseCode.GeneralReject),
+                )
         raise RuntimeError("Client not opened")
 
     def read_dtcs(self, mask: int = 0xFF) -> udsoncan.Response:
@@ -137,7 +163,11 @@ class UDSClient:
             try:
                 return self.client.get_dtc_by_status_mask(mask)
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.ReadDTCInformation, ResponseCode.GeneralReject))
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.ReadDTCInformation, ResponseCode.GeneralReject),
+                )
         raise RuntimeError("Client not opened")
 
     def clear_dtcs(self, group: int = 0xFFFFFF) -> udsoncan.Response:
@@ -146,7 +176,13 @@ class UDSClient:
             try:
                 return self.client.clear_dtc(group)
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.ClearDiagnosticInformation, ResponseCode.GeneralReject))
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(
+                        services.ClearDiagnosticInformation, ResponseCode.GeneralReject
+                    ),
+                )
         raise RuntimeError("Client not opened")
 
     def ecu_reset(self, level: int) -> udsoncan.Response:
@@ -155,7 +191,9 @@ class UDSClient:
             try:
                 return self.client.ecu_reset(level)
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.ECUReset, ResponseCode.GeneralReject))
+                return getattr(
+                    e, "response", udsoncan.Response(services.ECUReset, ResponseCode.GeneralReject)
+                )
         raise RuntimeError("Client not opened")
 
     def request_download(self, memory_location: udsoncan.MemoryLocation) -> udsoncan.Response:
@@ -164,7 +202,11 @@ class UDSClient:
             try:
                 return self.client.request_download(memory_location)
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.RequestDownload, ResponseCode.GeneralReject))
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.RequestDownload, ResponseCode.GeneralReject),
+                )
         raise RuntimeError("Client not opened")
 
     def transfer_data(self, sequence_counter: int, data: bytes) -> udsoncan.Response:
@@ -173,7 +215,11 @@ class UDSClient:
             try:
                 return self.client.transfer_data(sequence_counter, data)
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.TransferData, ResponseCode.GeneralReject))
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.TransferData, ResponseCode.GeneralReject),
+                )
         raise RuntimeError("Client not opened")
 
     def request_transfer_exit(self) -> udsoncan.Response:
@@ -182,14 +228,24 @@ class UDSClient:
             try:
                 return self.client.request_transfer_exit()
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.RequestTransferExit, ResponseCode.GeneralReject))
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.RequestTransferExit, ResponseCode.GeneralReject),
+                )
         raise RuntimeError("Client not opened")
 
     def start_routine(self, routine_id: int, data: bytes = b"") -> udsoncan.Response:
         """Routine control - start routine."""
         if self.client:
             try:
-                return self.client.routine_control(routine_id, udsoncan.services.RoutineControl.ControlType.startRoutine, data)
+                return self.client.routine_control(
+                    routine_id, udsoncan.services.RoutineControl.ControlType.startRoutine, data
+                )
             except Exception as e:
-                return getattr(e, "response", udsoncan.Response(services.RoutineControl, ResponseCode.GeneralReject))
+                return getattr(
+                    e,
+                    "response",
+                    udsoncan.Response(services.RoutineControl, ResponseCode.GeneralReject),
+                )
         raise RuntimeError("Client not opened")
