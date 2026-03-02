@@ -54,7 +54,7 @@ def test_handle_read_did(server):
     )
     response = server._handle_read_did(request)
     assert response.code == udsoncan.Response.Code.PositiveResponse
-    assert b"WBA12345678901234" in response.data
+    assert b"INV4567890ABCDEFG" in response.data
 
     # Test reading non-existent DID
     request = udsoncan.Request(

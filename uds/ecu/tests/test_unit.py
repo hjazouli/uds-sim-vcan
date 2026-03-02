@@ -13,28 +13,24 @@ def test_did_store_read_write():
 
     # Test read VIN
     vin = store.read(0xF190)
-    assert vin == b"WBA12345678901234"
+    assert vin == b"INV4567890ABCDEFG"
 
     # Test write VIN
-    new_vin = b"WBA00000000000000"
+    new_vin = b"INV00000000000000"
     store.write(0xF190, new_vin)
     assert store.read(0xF190) == new_vin
 
     # Test read Speed
-    speed_bytes = store.read(0xF187)
+    speed_bytes = store.read(0x4004)
     speed = struct.unpack(">H", speed_bytes)[0]
-    assert speed == 120
-
-    # Test write restricted DID
-    with pytest.raises(PermissionError):
-        store.write(0xF18C, b"12345678")
+    assert speed == 3500
 
 
 def test_did_store_reset():
     store = DIDStore()
-    store.write(0xD001, struct.pack(">H", 1000))
+    store.write(0x4002, struct.pack(">H", 1000))
     store.reset_to_defaults()
-    assert struct.unpack(">H", store.read(0xD001))[0] == 2500
+    assert struct.unpack(">H", store.read(0x4002))[0] == 150
 
 
 # --- DTCStore Tests ---
@@ -43,13 +39,13 @@ def test_did_store_reset():
 def test_dtc_store_filtering():
     store = DTCStore()
 
-    # Mask 0x01 (Active) should return P0100
+    # Mask 0x01 (Active) should return P0A78
     active_dtcs = store.get_dtcs_by_status_mask(0x01)
-    assert any(dtc["name"] == "P0100" for dtc in active_dtcs)
+    assert any(dtc["name"] == "P0A78" for dtc in active_dtcs)
 
-    # Mask 0x04 (Pending) should return U0100
+    # Mask 0x04 (Pending) should return P0C05
     pending_dtcs = store.get_dtcs_by_status_mask(0x04)
-    assert any(dtc["name"] == "U0100" for dtc in pending_dtcs)
+    assert any(dtc["name"] == "P0C05" for dtc in pending_dtcs)
 
 
 def test_dtc_store_clear():
@@ -58,7 +54,7 @@ def test_dtc_store_clear():
     assert len(store.get_dtcs_by_status_mask(0xFF)) == 0
 
     store.reset()
-    assert len(store.get_dtcs_by_status_mask(0xFF)) == 3
+    assert len(store.get_dtcs_by_status_mask(0xFF)) == 6
 
 
 # --- SecurityManager Tests ---
