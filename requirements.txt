@@ -9,3 +9,7 @@ pytest-html
 flake8
 mypy
 black
+rich
+fastapi
+uvicorn
+pydantic
